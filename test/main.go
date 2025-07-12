@@ -16,8 +16,10 @@ import (
 
 func main() {
 	var (
-		releaseName   = flag.String("release", "", "Helm release name to undeploy")
-		namespace     = flag.String("namespace", "default", "Kubernetes namespace")
+		githubOrg     = flag.String("github-org", "", "GitHub organization name")
+		repoName      = flag.String("repo-name", "", "Repository name")
+		branchName    = flag.String("branch-name", "", "Branch name")
+		prNumber      = flag.Int("pr-number", 0, "PR number (0 for branch deployments)")
 		wait          = flag.Bool("wait", true, "Wait for resources to be deleted")
 		timeout       = flag.Duration("timeout", 5*time.Minute, "Timeout for undeploy operation")
 		temporalHost  = flag.String("temporal-host", "localhost:7233", "Temporal server host:port")
@@ -32,8 +34,8 @@ func main() {
 		logger.Debug().Err(err).Msg("No .env file found")
 	}
 
-	if *releaseName == "" {
-		logger.Fatal().Msg("Release name is required")
+	if *githubOrg == "" || *repoName == "" || *branchName == "" {
+		logger.Fatal().Msg("GitHub org, repo name, and branch name are required")
 	}
 
 	temporalClient, err := client.Dial(client.Options{
@@ -45,11 +47,18 @@ func main() {
 	}
 	defer temporalClient.Close()
 
+	var prNumberPtr *int
+	if *prNumber > 0 {
+		prNumberPtr = prNumber
+	}
+	
 	request := activities.HelmUndeployRequest{
-		ReleaseName: *releaseName,
-		Namespace:   *namespace,
-		Wait:        *wait,
-		Timeout:     *timeout,
+		GitHubOrg:    *githubOrg,
+		RepoName:     *repoName,
+		BranchName:   *branchName,
+		PRNumber:     prNumberPtr,
+		Wait:         *wait,
+		Timeout:      *timeout,
 	}
 
 	workflowOptions := client.StartWorkflowOptions{
@@ -57,16 +66,21 @@ func main() {
 		TaskQueue: *taskQueue,
 	}
 	if workflowOptions.ID == "" {
-		workflowOptions.ID = fmt.Sprintf("helm-undeploy-%s-%s-%d", 
-			request.ReleaseName, 
-			request.Namespace, 
-			time.Now().Unix())
+		if request.PRNumber != nil {
+			workflowOptions.ID = fmt.Sprintf("helm-undeploy-%s-%s-pr-%d-%d", 
+				request.GitHubOrg, request.RepoName, *request.PRNumber, time.Now().Unix())
+		} else {
+			workflowOptions.ID = fmt.Sprintf("helm-undeploy-%s-%s-%s-%d", 
+				request.GitHubOrg, request.RepoName, request.BranchName, time.Now().Unix())
+		}
 	}
 
 	logger.Info().
 		Str("workflowID", workflowOptions.ID).
-		Str("release", request.ReleaseName).
-		Str("namespace", request.Namespace).
+		Str("githubOrg", request.GitHubOrg).
+		Str("repoName", request.RepoName).
+		Str("branchName", request.BranchName).
+		Interface("prNumber", request.PRNumber).
 		Bool("wait", request.Wait).
 		Dur("timeout", request.Timeout).
 		Msg("Starting helm undeploy workflow")

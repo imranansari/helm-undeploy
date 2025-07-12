@@ -9,7 +9,9 @@ echo "=== Helm Undeploy E2E Test Script ==="
 echo ""
 
 # Configuration
-RELEASE_NAME="test-app-$(date +%s)"
+GITHUB_ORG="test-org"
+REPO_NAME="test-app"
+BRANCH_NAME="feature-$(date +%s)"
 NAMESPACE="default"
 K3D_CLUSTER="helm-test"
 
@@ -72,6 +74,9 @@ print_status $? "Cluster is ready"
 echo ""
 echo "Running E2E test..."
 
+# Generate release name (same logic as in the workflow)
+RELEASE_NAME="$REPO_NAME-$(echo $BRANCH_NAME | tr '[:upper:]' '[:lower:]' | sed 's/[^a-zA-Z0-9]/-/g' | sed 's/^-\+\|-\+$//g')"
+
 # Step 1: Install test helm chart
 echo "1. Installing test Helm chart..."
 helm install $RELEASE_NAME ./test-helm-chart -n $NAMESPACE --create-namespace --wait
@@ -84,6 +89,7 @@ kubectl get service -n $NAMESPACE -l app.kubernetes.io/instance=$RELEASE_NAME
 # Step 2: Start the worker
 echo ""
 echo "2. Starting Temporal worker..."
+export KUBERNETES_NAMESPACE=$NAMESPACE
 cd worker
 go build -o helm-undeploy-worker
 ./helm-undeploy-worker &
@@ -97,8 +103,9 @@ echo ""
 echo "3. Executing undeploy workflow..."
 cd test
 go run main.go \
-    -release="$RELEASE_NAME" \
-    -namespace="$NAMESPACE" \
+    -github-org="$GITHUB_ORG" \
+    -repo-name="$REPO_NAME" \
+    -branch-name="$BRANCH_NAME" \
     -wait=true \
     -timeout=2m \
     -workflow-id="e2e-test-$RELEASE_NAME"

@@ -17,8 +17,10 @@ type HelmUndeployResponse struct {
 func HelmUndeployWorkflow(ctx workflow.Context, request activities.HelmUndeployRequest) (*HelmUndeployResponse, error) {
 	logger := workflow.GetLogger(ctx)
 	logger.Info("Starting helm undeploy workflow",
-		"releaseName", request.ReleaseName,
-		"namespace", request.Namespace)
+		"githubOrg", request.GitHubOrg,
+		"repoName", request.RepoName,
+		"branchName", request.BranchName,
+		"prNumber", request.PRNumber)
 
 	ao := workflow.ActivityOptions{
 		StartToCloseTimeout: 10 * time.Minute,

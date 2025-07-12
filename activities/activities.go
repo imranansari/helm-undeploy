@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -17,22 +19,60 @@ import (
 )
 
 type HelmUndeployRequest struct {
-	ReleaseName string
-	Namespace   string
-	Wait        bool
-	Timeout     time.Duration
+	GitHubOrg    string
+	RepoName     string
+	BranchName   string
+	PRNumber     *int // nil for branch deployments, set for PR deployments
+	Wait         bool
+	Timeout      time.Duration
 }
 
 type Activities struct {
 	logger     zerolog.Logger
 	kubeconfig string
+	namespace  string
 }
 
 func NewActivities(logger zerolog.Logger) *Activities {
+	namespace := os.Getenv("KUBERNETES_NAMESPACE")
+	if namespace == "" {
+		namespace = "default"
+	}
+	
 	return &Activities{
 		logger:     logger,
 		kubeconfig: os.Getenv("KUBECONFIG"),
+		namespace:  namespace,
 	}
+}
+
+// generateReleaseName creates a Helm release name based on GitHub context
+func (a *Activities) generateReleaseName(request HelmUndeployRequest) string {
+	// Sanitize inputs to be valid for Helm release names
+	sanitize := func(s string) string {
+		// Replace non-alphanumeric characters with hyphens
+		reg := regexp.MustCompile(`[^a-zA-Z0-9]+`)
+		sanitized := reg.ReplaceAllString(s, "-")
+		// Remove leading/trailing hyphens and convert to lowercase
+		sanitized = strings.Trim(sanitized, "-")
+		return strings.ToLower(sanitized)
+	}
+	
+	repoName := sanitize(request.RepoName)
+	branchName := sanitize(request.BranchName)
+	
+	// For PR deployments: {repo}-pr-{number}
+	if request.PRNumber != nil {
+		return fmt.Sprintf("%s-pr-%d", repoName, *request.PRNumber)
+	}
+	
+	// For branch deployments: {repo}-{branch}
+	// Special handling for main/master branches
+	if branchName == "main" || branchName == "master" {
+		return repoName
+	}
+	
+	return fmt.Sprintf("%s-%s", repoName, branchName)
 }
 
 type ValidateReleaseResponse struct {
@@ -43,18 +83,24 @@ type ValidateReleaseResponse struct {
 }
 
 func (a *Activities) ValidateReleaseActivity(ctx context.Context, request HelmUndeployRequest) (*ValidateReleaseResponse, error) {
+	releaseName := a.generateReleaseName(request)
+	
 	a.logger.Info().
-		Str("release", request.ReleaseName).
-		Str("namespace", request.Namespace).
+		Str("releaseName", releaseName).
+		Str("namespace", a.namespace).
+		Str("githubOrg", request.GitHubOrg).
+		Str("repoName", request.RepoName).
+		Str("branchName", request.BranchName).
+		Interface("prNumber", request.PRNumber).
 		Msg("Validating helm release")
 
-	actionConfig, err := a.getActionConfig(request.Namespace)
+	actionConfig, err := a.getActionConfig(a.namespace)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get action config: %w", err)
 	}
 
 	listAction := action.NewList(actionConfig)
-	listAction.Filter = request.ReleaseName
+	listAction.Filter = releaseName
 	listAction.Deployed = true
 
 	releases, err := listAction.Run()
@@ -63,7 +109,7 @@ func (a *Activities) ValidateReleaseActivity(ctx context.Context, request HelmUn
 	}
 
 	for _, release := range releases {
-		if release.Name == request.ReleaseName {
+		if release.Name == releaseName {
 			return &ValidateReleaseResponse{
 				Exists:      true,
 				Status:      release.Info.Status.String(),
@@ -84,12 +130,18 @@ type UndeployReleaseResponse struct {
 }
 
 func (a *Activities) UndeployReleaseActivity(ctx context.Context, request HelmUndeployRequest) (*UndeployReleaseResponse, error) {
+	releaseName := a.generateReleaseName(request)
+	
 	a.logger.Info().
-		Str("release", request.ReleaseName).
-		Str("namespace", request.Namespace).
+		Str("releaseName", releaseName).
+		Str("namespace", a.namespace).
+		Str("githubOrg", request.GitHubOrg).
+		Str("repoName", request.RepoName).
+		Str("branchName", request.BranchName).
+		Interface("prNumber", request.PRNumber).
 		Msg("Undeploying helm release")
 
-	actionConfig, err := a.getActionConfig(request.Namespace)
+	actionConfig, err := a.getActionConfig(a.namespace)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get action config: %w", err)
 	}
@@ -100,7 +152,7 @@ func (a *Activities) UndeployReleaseActivity(ctx context.Context, request HelmUn
 		uninstallAction.Timeout = request.Timeout
 	}
 
-	resp, err := uninstallAction.Run(request.ReleaseName)
+	resp, err := uninstallAction.Run(releaseName)
 	if err != nil {
 		return &UndeployReleaseResponse{
 			Success: false,
@@ -110,7 +162,7 @@ func (a *Activities) UndeployReleaseActivity(ctx context.Context, request HelmUn
 
 	return &UndeployReleaseResponse{
 		Success: true,
-		Message: fmt.Sprintf("Release %s uninstalled. Status: %s", request.ReleaseName, resp.Info),
+		Message: fmt.Sprintf("Release %s uninstalled. Status: %s", releaseName, resp.Info),
 	}, nil
 }
 
@@ -121,9 +173,15 @@ type VerifyUndeployResponse struct {
 }
 
 func (a *Activities) VerifyUndeployActivity(ctx context.Context, request HelmUndeployRequest) (*VerifyUndeployResponse, error) {
+	releaseName := a.generateReleaseName(request)
+	
 	a.logger.Info().
-		Str("release", request.ReleaseName).
-		Str("namespace", request.Namespace).
+		Str("releaseName", releaseName).
+		Str("namespace", a.namespace).
+		Str("githubOrg", request.GitHubOrg).
+		Str("repoName", request.RepoName).
+		Str("branchName", request.BranchName).
+		Interface("prNumber", request.PRNumber).
 		Msg("Verifying helm release undeploy")
 
 	config, err := a.getKubeConfig()
@@ -136,15 +194,15 @@ func (a *Activities) VerifyUndeployActivity(ctx context.Context, request HelmUnd
 		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
 	}
 
-	deployments, err := clientset.AppsV1().Deployments(request.Namespace).List(ctx, v1.ListOptions{
-		LabelSelector: fmt.Sprintf("app.kubernetes.io/instance=%s", request.ReleaseName),
+	deployments, err := clientset.AppsV1().Deployments(a.namespace).List(ctx, v1.ListOptions{
+		LabelSelector: fmt.Sprintf("app.kubernetes.io/instance=%s", releaseName),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list deployments: %w", err)
 	}
 
-	services, err := clientset.CoreV1().Services(request.Namespace).List(ctx, v1.ListOptions{
-		LabelSelector: fmt.Sprintf("app.kubernetes.io/instance=%s", request.ReleaseName),
+	services, err := clientset.CoreV1().Services(a.namespace).List(ctx, v1.ListOptions{
+		LabelSelector: fmt.Sprintf("app.kubernetes.io/instance=%s", releaseName),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list services: %w", err)
