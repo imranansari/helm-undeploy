@@ -25,6 +25,7 @@ func main() {
 		temporalHost  = flag.String("temporal-host", "localhost:7233", "Temporal server host:port")
 		taskQueue     = flag.String("task-queue", "helm-undeploy-queue", "Temporal task queue")
 		workflowID    = flag.String("workflow-id", "", "Workflow ID (generated if not provided)")
+		dryRun        = flag.Bool("dry-run", false, "Simulate operations without making changes")
 	)
 	flag.Parse()
 
@@ -59,6 +60,7 @@ func main() {
 		PRNumber:     prNumberPtr,
 		Wait:         *wait,
 		Timeout:      *timeout,
+		DryRun:       *dryRun,
 	}
 
 	workflowOptions := client.StartWorkflowOptions{
@@ -83,6 +85,7 @@ func main() {
 		Interface("prNumber", request.PRNumber).
 		Bool("wait", request.Wait).
 		Dur("timeout", request.Timeout).
+		Bool("dryRun", request.DryRun).
 		Msg("Starting helm undeploy workflow")
 
 	we, err := temporalClient.ExecuteWorkflow(context.Background(), workflowOptions, 

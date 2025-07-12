@@ -25,6 +25,7 @@ type HelmUndeployRequest struct {
 	PRNumber     *int // nil for branch deployments, set for PR deployments
 	Wait         bool
 	Timeout      time.Duration
+	DryRun       bool // if true, simulate operations without making changes
 }
 
 type Activities struct {
@@ -77,6 +78,7 @@ func (a *Activities) generateReleaseName(request HelmUndeployRequest) string {
 
 type ValidateReleaseResponse struct {
 	Exists      bool
+	ReleaseName string
 	Status      string
 	Version     int
 	UpdatedTime time.Time
@@ -112,6 +114,7 @@ func (a *Activities) ValidateReleaseActivity(ctx context.Context, request HelmUn
 		if release.Name == releaseName {
 			return &ValidateReleaseResponse{
 				Exists:      true,
+				ReleaseName: releaseName,
 				Status:      release.Info.Status.String(),
 				Version:     release.Version,
 				UpdatedTime: release.Info.LastDeployed.Time,
@@ -120,7 +123,8 @@ func (a *Activities) ValidateReleaseActivity(ctx context.Context, request HelmUn
 	}
 
 	return &ValidateReleaseResponse{
-		Exists: false,
+		Exists:      false,
+		ReleaseName: releaseName,
 	}, nil
 }
 
@@ -139,7 +143,15 @@ func (a *Activities) UndeployReleaseActivity(ctx context.Context, request HelmUn
 		Str("repoName", request.RepoName).
 		Str("branchName", request.BranchName).
 		Interface("prNumber", request.PRNumber).
+		Bool("dryRun", request.DryRun).
 		Msg("Undeploying helm release")
+
+	if request.DryRun {
+		return &UndeployReleaseResponse{
+			Success: true,
+			Message: fmt.Sprintf("DRY-RUN: Would undeploy release %s from namespace %s", releaseName, a.namespace),
+		}, nil
+	}
 
 	actionConfig, err := a.getActionConfig(a.namespace)
 	if err != nil {
@@ -182,7 +194,16 @@ func (a *Activities) VerifyUndeployActivity(ctx context.Context, request HelmUnd
 		Str("repoName", request.RepoName).
 		Str("branchName", request.BranchName).
 		Interface("prNumber", request.PRNumber).
+		Bool("dryRun", request.DryRun).
 		Msg("Verifying helm release undeploy")
+
+	if request.DryRun {
+		return &VerifyUndeployResponse{
+			Verified:         true,
+			ResourcesRemoved: true,
+			Message:          fmt.Sprintf("DRY-RUN: Would verify undeploy of release %s from namespace %s", releaseName, a.namespace),
+		}, nil
+	}
 
 	config, err := a.getKubeConfig()
 	if err != nil {

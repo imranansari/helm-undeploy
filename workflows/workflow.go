@@ -20,7 +20,8 @@ func HelmUndeployWorkflow(ctx workflow.Context, request activities.HelmUndeployR
 		"githubOrg", request.GitHubOrg,
 		"repoName", request.RepoName,
 		"branchName", request.BranchName,
-		"prNumber", request.PRNumber)
+		"prNumber", request.PRNumber,
+		"dryRun", request.DryRun)
 
 	ao := workflow.ActivityOptions{
 		StartToCloseTimeout: 10 * time.Minute,
@@ -45,9 +46,22 @@ func HelmUndeployWorkflow(ctx workflow.Context, request activities.HelmUndeployR
 	}
 
 	if !validateResp.Exists {
+		message := "Release not found"
+		if request.DryRun {
+			message = "DRY-RUN: Release not found (would fail if executed)"
+		}
 		return &HelmUndeployResponse{
 			Success:   false,
-			Message:   "Release not found",
+			Message:   message,
+			Timestamp: time.Now(),
+		}, nil
+	}
+
+	if request.DryRun {
+		logger.Info("DRY-RUN: Would undeploy release", "releaseName", validateResp.ReleaseName)
+		return &HelmUndeployResponse{
+			Success:   true,
+			Message:   "DRY-RUN: Would undeploy release " + validateResp.ReleaseName,
 			Timestamp: time.Now(),
 		}, nil
 	}
