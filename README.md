@@ -475,6 +475,98 @@ chmod 600 ~/.kube/config
 helm list --all-namespaces
 ```
 
+### Understanding Helm Storage (Advanced Troubleshooting)
+
+This workflow uses the **Helm SDK directly** (not CLI) for better performance and type safety. If you're having issues with release detection or undeployment, understanding how Helm stores data can help:
+
+#### Helm Storage Drivers
+
+The `HELM_DRIVER` environment variable controls where Helm stores release information:
+
+| Driver | Storage Location | Security | Use Case |
+|--------|------------------|----------|----------|
+| `secrets` | **Kubernetes Secrets** | ✅ **High** (RBAC protected, base64 encoded) | **Recommended for production** |
+| `configmaps` | Kubernetes ConfigMaps | ⚠️ Medium (RBAC protected, plain text) | Legacy systems |
+| `memory` | In-memory only | ❌ Lost on restart | Testing only |
+| `sql` | SQL Database | ✅ High | Advanced/enterprise setups |
+
+#### Diagnosing Storage Issues
+
+**1. Check for Helm release secrets (most common):**
+```bash
+# Check all namespaces
+kubectl get secrets -A | grep "sh.helm.release"
+
+# Check specific namespace
+kubectl get secrets -n your-namespace | grep "sh.helm.release"
+
+# Expected output if using secrets driver:
+# sh.helm.release.v1.my-app.v1    Opaque    1      2d
+```
+
+**2. Check for ConfigMaps (legacy):**
+```bash
+# Check for Helm release configmaps
+kubectl get configmaps -A | grep "sh.helm.release"
+```
+
+**3. Verify release storage consistency:**
+```bash
+# List current releases
+helm list -A
+
+# Get release details to see storage info
+helm get all your-release-name -n your-namespace
+
+# Check status with debug info
+helm status your-release-name -n your-namespace --debug
+```
+
+**4. Test storage detection:**
+```bash
+# Install test release and observe storage
+helm install test-storage-check ./test-helm-chart -n test-namespace
+kubectl get secrets,configmaps -n test-namespace | grep helm
+helm uninstall test-storage-check -n test-namespace
+```
+
+#### Why No Helm Chart is Needed for Uninstall
+
+When you install a Helm chart, Helm stores:
+- **Release metadata** (name, namespace, status, version)
+- **Rendered Kubernetes manifests** (what was actually deployed)
+- **Release history** (for rollbacks)
+
+During uninstall, Helm:
+1. **Reads stored release data** from the configured storage (secrets/configmaps)
+2. **Identifies all resources** that were created by that release
+3. **Deletes each resource** using the stored manifests
+4. **Removes the release metadata**
+
+**This means:** Your workflow can undeploy releases without having access to the original Helm charts! Perfect for event-driven cleanup workflows.
+
+#### Storage-Related Issues
+
+**Release not found despite existing in cluster:**
+- Check if deploy and undeploy use different storage drivers
+- Verify RBAC permissions for secret/configmap access
+- Ensure namespace consistency
+
+**RBAC errors during undeploy:**
+```yaml
+# Required permissions for secrets driver
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "delete"]
+```
+
+**Storage recommendations:**
+- ✅ **Use `HELM_DRIVER=secrets`** for production (default in our configuration)
+- ✅ **Ensure proper RBAC** for secret access in target namespaces
+- ✅ **Monitor storage usage** - secrets have size limits (1MB per secret)
+- ✅ **Backup considerations** - release data is stored in etcd with your secrets
+
 ### Debug Logging
 
 Enable debug logging by setting environment variable:
