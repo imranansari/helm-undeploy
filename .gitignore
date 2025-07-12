@@ -1,0 +1,39 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/worker/worker
+/test/test
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kubernetes secrets
+secrets/
+*.secret
+
+# Logs
+*.log
