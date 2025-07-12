@@ -5,7 +5,9 @@
 *.so
 *.dylib
 /worker/worker
+/worker/helm-undeploy-worker
 /test/test
+/test/test-client
 
 # Test binary, built with `go test -c`
 *.test
